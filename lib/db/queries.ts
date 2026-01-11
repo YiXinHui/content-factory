@@ -600,3 +600,422 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     );
   }
 }
+
+
+// ============================================
+// 流淌内容工厂 - 数据库查询函数
+// ============================================
+
+import {
+  type Project,
+  project,
+  type Topic,
+  topic,
+  type Analysis,
+  analysis,
+  type Output,
+  output,
+  type NewTopic,
+  newTopic,
+  type SupportMaterials,
+  type CognitiveContrast,
+  type LogicChain,
+  type SpreadElements,
+  type AudienceQuestion,
+  type DirectorContent,
+  type CopywriterContent,
+} from "./schema";
+
+// ========== 项目相关 ==========
+
+export async function createProject({
+  userId,
+  title,
+  originalText,
+}: {
+  userId: string;
+  title: string;
+  originalText: string;
+}): Promise<Project> {
+  try {
+    const [newProject] = await db
+      .insert(project)
+      .values({
+        userId,
+        title,
+        originalText,
+        currentStage: "mining",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+    return newProject;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to create project");
+  }
+}
+
+export async function getProjectById({ id }: { id: string }): Promise<Project | null> {
+  try {
+    const [selectedProject] = await db
+      .select()
+      .from(project)
+      .where(eq(project.id, id));
+    return selectedProject || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get project by id");
+  }
+}
+
+export async function getProjectsByUserId({
+  userId,
+  limit = 20,
+}: {
+  userId: string;
+  limit?: number;
+}): Promise<Project[]> {
+  try {
+    return await db
+      .select()
+      .from(project)
+      .where(eq(project.userId, userId))
+      .orderBy(desc(project.updatedAt))
+      .limit(limit);
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get projects by user id");
+  }
+}
+
+export async function updateProjectStage({
+  id,
+  stage,
+}: {
+  id: string;
+  stage: "mining" | "analysis" | "director" | "copywriter" | "planning" | "completed";
+}): Promise<void> {
+  try {
+    await db
+      .update(project)
+      .set({ currentStage: stage, updatedAt: new Date() })
+      .where(eq(project.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to update project stage");
+  }
+}
+
+export async function updateProjectTitle({
+  id,
+  title,
+}: {
+  id: string;
+  title: string;
+}): Promise<void> {
+  try {
+    await db
+      .update(project)
+      .set({ title, updatedAt: new Date() })
+      .where(eq(project.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to update project title");
+  }
+}
+
+export async function deleteProject({ id }: { id: string }): Promise<void> {
+  try {
+    // 级联删除会自动处理关联数据
+    await db.delete(project).where(eq(project.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to delete project");
+  }
+}
+
+// ========== 主题相关 ==========
+
+export async function createTopics({
+  topics,
+}: {
+  topics: {
+    projectId: string;
+    title: string;
+    coreIdea: string;
+    emotionLevel: number;
+    supportMaterials: SupportMaterials;
+    highlightedText: string[];
+    reason?: string;
+  }[];
+}): Promise<Topic[]> {
+  try {
+    return await db.insert(topic).values(topics).returning();
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to create topics");
+  }
+}
+
+export async function getTopicsByProjectId({
+  projectId,
+}: {
+  projectId: string;
+}): Promise<Topic[]> {
+  try {
+    return await db
+      .select()
+      .from(topic)
+      .where(eq(topic.projectId, projectId))
+      .orderBy(desc(topic.emotionLevel));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get topics by project id");
+  }
+}
+
+export async function getTopicById({ id }: { id: string }): Promise<Topic | null> {
+  try {
+    const [selectedTopic] = await db.select().from(topic).where(eq(topic.id, id));
+    return selectedTopic || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get topic by id");
+  }
+}
+
+export async function selectTopic({ id }: { id: string }): Promise<void> {
+  try {
+    await db.update(topic).set({ isSelected: true }).where(eq(topic.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to select topic");
+  }
+}
+
+// ========== 分析相关 ==========
+
+export async function createAnalysis({
+  topicId,
+  coreArgument,
+  cognitiveContrast,
+  logicChain,
+  spreadElements,
+  audienceQuestions,
+}: {
+  topicId: string;
+  coreArgument: string;
+  cognitiveContrast: CognitiveContrast;
+  logicChain: LogicChain;
+  spreadElements: SpreadElements;
+  audienceQuestions: AudienceQuestion[];
+}): Promise<Analysis> {
+  try {
+    const [newAnalysis] = await db
+      .insert(analysis)
+      .values({
+        topicId,
+        coreArgument,
+        cognitiveContrast,
+        logicChain,
+        spreadElements,
+        audienceQuestions,
+        createdAt: new Date(),
+      })
+      .returning();
+    return newAnalysis;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to create analysis");
+  }
+}
+
+export async function getAnalysisByTopicId({
+  topicId,
+}: {
+  topicId: string;
+}): Promise<Analysis | null> {
+  try {
+    const [selectedAnalysis] = await db
+      .select()
+      .from(analysis)
+      .where(eq(analysis.topicId, topicId));
+    return selectedAnalysis || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get analysis by topic id");
+  }
+}
+
+export async function getAnalysisById({ id }: { id: string }): Promise<Analysis | null> {
+  try {
+    const [selectedAnalysis] = await db
+      .select()
+      .from(analysis)
+      .where(eq(analysis.id, id));
+    return selectedAnalysis || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get analysis by id");
+  }
+}
+
+// ========== 产出物相关 ==========
+
+export async function createOutput({
+  analysisId,
+  type,
+  directorContent,
+  copywriterContent,
+}: {
+  analysisId: string;
+  type: "director" | "copywriter";
+  directorContent?: DirectorContent;
+  copywriterContent?: CopywriterContent;
+}): Promise<Output> {
+  try {
+    const [newOutput] = await db
+      .insert(output)
+      .values({
+        analysisId,
+        type,
+        directorContent,
+        copywriterContent,
+        createdAt: new Date(),
+      })
+      .returning();
+    return newOutput;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to create output");
+  }
+}
+
+export async function updateOutput({
+  id,
+  directorContent,
+  copywriterContent,
+}: {
+  id: string;
+  directorContent?: DirectorContent;
+  copywriterContent?: CopywriterContent;
+}): Promise<void> {
+  try {
+    const updateData: Partial<Output> = {};
+    if (directorContent) updateData.directorContent = directorContent;
+    if (copywriterContent) updateData.copywriterContent = copywriterContent;
+    
+    await db.update(output).set(updateData).where(eq(output.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to update output");
+  }
+}
+
+export async function getOutputByAnalysisId({
+  analysisId,
+  type,
+}: {
+  analysisId: string;
+  type?: "director" | "copywriter";
+}): Promise<Output | null> {
+  try {
+    let query = db.select().from(output).where(eq(output.analysisId, analysisId));
+    
+    if (type) {
+      query = db
+        .select()
+        .from(output)
+        .where(and(eq(output.analysisId, analysisId), eq(output.type, type)));
+    }
+    
+    const [selectedOutput] = await query;
+    return selectedOutput || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get output by analysis id");
+  }
+}
+
+export async function getOutputById({ id }: { id: string }): Promise<Output | null> {
+  try {
+    const [selectedOutput] = await db.select().from(output).where(eq(output.id, id));
+    return selectedOutput || null;
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get output by id");
+  }
+}
+
+// ========== 新选题相关 ==========
+
+export async function createNewTopics({
+  topics,
+}: {
+  topics: {
+    outputId: string;
+    title: string;
+    direction: "up" | "down" | "parallel";
+    directionLabel: string;
+    description: string;
+    potentialAngle?: string;
+  }[];
+}): Promise<NewTopic[]> {
+  try {
+    return await db.insert(newTopic).values(topics).returning();
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to create new topics");
+  }
+}
+
+export async function getNewTopicsByOutputId({
+  outputId,
+}: {
+  outputId: string;
+}): Promise<NewTopic[]> {
+  try {
+    return await db
+      .select()
+      .from(newTopic)
+      .where(eq(newTopic.outputId, outputId))
+      .orderBy(asc(newTopic.createdAt));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get new topics by output id");
+  }
+}
+
+export async function markNewTopicAsUsed({ id }: { id: string }): Promise<void> {
+  try {
+    await db.update(newTopic).set({ isUsed: true }).where(eq(newTopic.id, id));
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to mark new topic as used");
+  }
+}
+
+// ========== 复合查询 ==========
+
+export async function getProjectWithDetails({ id }: { id: string }) {
+  try {
+    const projectData = await getProjectById({ id });
+    if (!projectData) return null;
+
+    const topics = await getTopicsByProjectId({ projectId: id });
+    
+    // 获取每个主题的分析
+    const topicsWithAnalysis = await Promise.all(
+      topics.map(async (t) => {
+        const analysisData = await getAnalysisByTopicId({ topicId: t.id });
+        let outputs: Output[] = [];
+        
+        if (analysisData) {
+          const directorOutput = await getOutputByAnalysisId({
+            analysisId: analysisData.id,
+            type: "director",
+          });
+          const copywriterOutput = await getOutputByAnalysisId({
+            analysisId: analysisData.id,
+            type: "copywriter",
+          });
+          outputs = [directorOutput, copywriterOutput].filter(Boolean) as Output[];
+        }
+        
+        return {
+          ...t,
+          analysis: analysisData,
+          outputs,
+        };
+      })
+    );
+
+    return {
+      ...projectData,
+      topics: topicsWithAnalysis,
+    };
+  } catch (_error) {
+    throw new ChatSDKError("bad_request:database", "Failed to get project with details");
+  }
+}
