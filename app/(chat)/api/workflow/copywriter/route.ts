@@ -16,7 +16,7 @@ import {
 } from "@/lib/ai/workflow-prompts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import OpenAI from "openai";
+import { createCozeClient } from "@/lib/ai/coze-client";
 
 const copywriterRequestSchema = z.object({
   analysisId: z.string().uuid(),
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const client = new OpenAI();
+    const cozeClient = createCozeClient();
 
     // 获取或创建 output
     let output = await getOutputByAnalysisId({ analysisId, type: "copywriter" });
@@ -92,23 +92,30 @@ export async function POST(request: Request) {
     switch (step) {
       case 1: {
         // Step 1: 推荐公式
-        const completion = await client.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [
-            { role: "system", content: COPYWRITER_FORMULA_PROMPT },
-            {
-              role: "user",
-              content: `请为以下主题推荐3种最适合的文案结构公式：\n\n${baseContext}`,
-            },
-          ],
-          temperature: 0.7,
-          response_format: { type: "json_object" },
-        });
+        const prompt = `${COPYWRITER_FORMULA_PROMPT}
 
-        const content = completion.choices[0]?.message?.content;
-        if (!content) throw new Error("No response from AI");
+请为以下主题推荐3种最适合的文案结构公式：
 
-        const parsed = JSON.parse(content);
+${baseContext}
+
+请以 JSON 格式返回结果，格式如下：
+{
+  "formulas": [
+    {
+      "name": "公式名称",
+      "description": "公式描述",
+      "whyFit": "为什么适合这个主题",
+      "example": "结构示例"
+    }
+  ]
+}`;
+
+        const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+        let jsonContent = response;
+        const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) jsonContent = jsonMatch[1].trim();
+
+        const parsed = JSON.parse(jsonContent);
         result = parsed;
 
         // 创建或更新 output
@@ -143,28 +150,34 @@ export async function POST(request: Request) {
           );
         }
 
-        const completion = await client.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [
-            { role: "system", content: COPYWRITER_STRUCTURE_PROMPT },
-            {
-              role: "user",
-              content: `用户选择了"${selectedFormula.name}"公式，请生成文章骨架：
+        const prompt = `${COPYWRITER_STRUCTURE_PROMPT}
+
+用户选择了"${selectedFormula.name}"公式，请生成文章骨架：
 
 公式说明：${selectedFormula.description}
 结构示例：${selectedFormula.example}
 
-${baseContext}`,
-            },
-          ],
-          temperature: 0.7,
-          response_format: { type: "json_object" },
-        });
+${baseContext}
 
-        const content = completion.choices[0]?.message?.content;
-        if (!content) throw new Error("No response from AI");
+请以 JSON 格式返回结果，格式如下：
+{
+  "structure": [
+    {
+      "section": "段落名称",
+      "subtitle": "小标题",
+      "keyPoints": ["要点1", "要点2"],
+      "estimatedWords": 200
+    }
+  ],
+  "totalEstimatedWords": 1000
+}`;
 
-        const parsed = JSON.parse(content);
+        const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+        let jsonContent = response;
+        const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) jsonContent = jsonMatch[1].trim();
+
+        const parsed = JSON.parse(jsonContent);
         result = parsed;
 
         if (output) {
@@ -184,23 +197,29 @@ ${baseContext}`,
 
       case 3: {
         // Step 3: 生成标题
-        const completion = await client.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [
-            { role: "system", content: COPYWRITER_TITLE_PROMPT },
-            {
-              role: "user",
-              content: `请为以下内容生成8-10个吸睛标题：\n\n${baseContext}`,
-            },
-          ],
-          temperature: 0.8,
-          response_format: { type: "json_object" },
-        });
+        const prompt = `${COPYWRITER_TITLE_PROMPT}
 
-        const content = completion.choices[0]?.message?.content;
-        if (!content) throw new Error("No response from AI");
+请为以下内容生成8-10个吸睛标题：
 
-        const parsed = JSON.parse(content);
+${baseContext}
+
+请以 JSON 格式返回结果，格式如下：
+{
+  "titles": [
+    {
+      "title": "标题文本",
+      "elements": ["使用的元素1", "使用的元素2"],
+      "hook": "吸引点说明"
+    }
+  ]
+}`;
+
+        const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+        let jsonContent = response;
+        const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) jsonContent = jsonMatch[1].trim();
+
+        const parsed = JSON.parse(jsonContent);
         result = parsed;
 
         if (output) {
@@ -232,13 +251,9 @@ ${baseContext}`,
           )
           .join("\n");
 
-        const completion = await client.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [
-            { role: "system", content: COPYWRITER_CONTENT_PROMPT },
-            {
-              role: "user",
-              content: `请根据以下信息生成完整文案：
+        const prompt = `${COPYWRITER_CONTENT_PROMPT}
+
+请根据以下信息生成完整文案：
 
 选定标题：${selectedTitle.title}
 
@@ -248,14 +263,11 @@ ${structureText}
 ${baseContext}
 
 原文参考：
-${project.originalText}`,
-            },
-          ],
-          temperature: 0.7,
-        });
+${project.originalText}
 
-        const content = completion.choices[0]?.message?.content;
-        if (!content) throw new Error("No response from AI");
+请直接输出完整的文案内容，不需要 JSON 格式。`;
+
+        const content = await cozeClient.chat(prompt, session.user.id || 'anonymous');
 
         result = { fullContent: content };
 

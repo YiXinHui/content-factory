@@ -3,7 +3,7 @@ import { getProjectById, createTopics, updateProjectStage } from "@/lib/db/queri
 import { MINING_PROMPT } from "@/lib/ai/workflow-prompts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import OpenAI from "openai";
+import { createCozeClient } from "@/lib/ai/coze-client";
 
 const miningRequestSchema = z.object({
   projectId: z.string().uuid(),
@@ -45,26 +45,46 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // 调用 AI 进行内容挖掘
-    const client = new OpenAI();
+    // 调用 Coze API 进行内容挖掘
+    const cozeClient = createCozeClient();
     
-    const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        { role: "system", content: MINING_PROMPT },
-        { role: "user", content: `请分析以下文本，挖掘高价值主题：\n\n${project.originalText}` },
-      ],
-      temperature: 0.7,
-      response_format: { type: "json_object" },
-    });
+    const prompt = `${MINING_PROMPT}
 
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("No response from AI");
+请分析以下文本，挖掘高价值主题：
+
+${project.originalText}
+
+请以 JSON 格式返回结果，格式如下：
+{
+  "topics": [
+    {
+      "title": "主题标题",
+      "coreIdea": "核心观点",
+      "emotionLevel": 1-5的数字,
+      "supportMaterials": {
+        "cases": 案例数量,
+        "quotes": 金句数量,
+        "data": 数据数量
+      },
+      "highlightedText": ["原文中的关键句子1", "关键句子2"],
+      "reason": "推荐理由"
+    }
+  ]
+}`;
+
+    const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+
+    // 尝试从响应中提取 JSON
+    let jsonContent = response;
+    
+    // 如果响应包含 markdown 代码块，提取其中的 JSON
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1].trim();
     }
 
     // 解析 AI 响应
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(jsonContent);
     const validated = miningResponseSchema.parse(parsed);
 
     // 保存主题到数据库

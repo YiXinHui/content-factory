@@ -10,7 +10,7 @@ import {
 import { PLANNING_PROMPT } from "@/lib/ai/workflow-prompts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import OpenAI from "openai";
+import { createCozeClient } from "@/lib/ai/coze-client";
 
 const planningRequestSchema = z.object({
   outputId: z.string().uuid(),
@@ -69,10 +69,12 @@ export async function POST(request: Request) {
 文案结构：${output.copywriterContent.selectedFormula?.name || "未选定"}`;
     }
 
-    // 调用 AI 发散新选题
-    const client = new OpenAI();
+    // 调用 Coze API 发散新选题
+    const cozeClient = createCozeClient();
 
-    const userPrompt = `请围绕以下已完成的内容，发散新的选题方向：
+    const prompt = `${PLANNING_PROMPT}
+
+请围绕以下已完成的内容，发散新的选题方向：
 
 主题：${topic.title}
 核心论点：${analysis.coreArgument}
@@ -82,25 +84,38 @@ export async function POST(request: Request) {
 - 我们的观点：${analysis.cognitiveContrast.ourPoint}
 
 产出物类型：${output.type === "director" ? "编导方案" : "文案"}
-${outputSummary}`;
+${outputSummary}
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        { role: "system", content: PLANNING_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.8,
-      response_format: { type: "json_object" },
-    });
+请以 JSON 格式返回结果，格式如下：
+{
+  "newTopics": [
+    {
+      "title": "选题标题",
+      "direction": "up/down/parallel",
+      "directionLabel": "向上延伸/向下细分/平行拓展",
+      "description": "选题描述",
+      "potentialAngle": "潜在切入角度"
+    }
+  ]
+}
 
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("No response from AI");
+注意：
+- direction 必须是 "up"、"down" 或 "parallel" 之一
+- 向上延伸(up)：更宏观的视角
+- 向下细分(down)：更具体的细节
+- 平行拓展(parallel)：相关但不同的角度`;
+
+    const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+
+    // 尝试从响应中提取 JSON
+    let jsonContent = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1].trim();
     }
 
     // 解析 AI 响应
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(jsonContent);
     const validated = planningResponseSchema.parse(parsed);
 
     // 保存新选题到数据库

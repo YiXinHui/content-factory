@@ -9,7 +9,7 @@ import {
 import { ANALYSIS_PROMPT } from "@/lib/ai/workflow-prompts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import OpenAI from "openai";
+import { createCozeClient } from "@/lib/ai/coze-client";
 
 const analysisRequestSchema = z.object({
   topicId: z.string().uuid(),
@@ -63,10 +63,12 @@ export async function POST(request: Request) {
     // 标记主题为已选中
     await selectTopic({ id: topicId });
 
-    // 调用 AI 进行深度分析
-    const client = new OpenAI();
+    // 调用 Coze API 进行深度分析
+    const cozeClient = createCozeClient();
 
-    const userPrompt = `请对以下主题进行五步深度分析：
+    const prompt = `${ANALYSIS_PROMPT}
+
+请对以下主题进行五步深度分析：
 
 主题标题：${topic.title}
 核心观点：${topic.coreIdea}
@@ -75,25 +77,45 @@ export async function POST(request: Request) {
 ${topic.highlightedText.join("\n\n")}
 
 完整原文参考：
-${project.originalText}`;
+${project.originalText}
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        { role: "system", content: ANALYSIS_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.7,
-      response_format: { type: "json_object" },
-    });
+请以 JSON 格式返回结果，格式如下：
+{
+  "coreArgument": "核心论点",
+  "cognitiveContrast": {
+    "commonBelief": "大众普遍认为...",
+    "ourPoint": "但我们的观点是...",
+    "tension": "这种认知张力在于..."
+  },
+  "logicChain": {
+    "because": "因为...",
+    "so": "所以...",
+    "moreover": "进一步说明..."
+  },
+  "spreadElements": {
+    "quotes": ["金句1", "金句2"],
+    "cases": ["案例1", "案例2"],
+    "data": ["数据1", "数据2"]
+  },
+  "audienceQuestions": [
+    {
+      "question": "受众可能的问题",
+      "answerDirection": "回答方向"
+    }
+  ]
+}`;
 
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("No response from AI");
+    const response = await cozeClient.chat(prompt, session.user.id || 'anonymous');
+
+    // 尝试从响应中提取 JSON
+    let jsonContent = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1].trim();
     }
 
     // 解析 AI 响应
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(jsonContent);
     const validated = analysisResponseSchema.parse(parsed);
 
     // 保存分析结果到数据库
